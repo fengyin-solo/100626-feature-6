@@ -18,10 +18,20 @@
       </article>
     </div>
 
+    <section v-if="memo" class="conclusion-box">
+      <div class="conclusion-head">
+        <strong>调度中心结论待办（与流域总览同源的同一条记录）</strong>
+        <span class="conclusion-time">{{ formatTime(memo.updatedAt) }}</span>
+      </div>
+      <p class="conclusion-text">{{ memo.text }}</p>
+      <p class="conclusion-meta">覆盖电站 {{ memo.stationCount }} 座 · 总装机 {{ memo.capacityTotal.toLocaleString('zh-CN') }} MW</p>
+    </section>
+
     <p class="status-legend">
       <span v-for="item in statusSummary" :key="item.status" class="legend-item">
         {{ item.status }}：{{ item.count }}
       </span>
+      <span v-if="!canMaintain" class="legend-item warn">当前岗位「{{ store.roleLabel }}」仅可查看，工作票流转归属检修专责</span>
     </p>
 
     <form class="filter-bar" @submit.prevent="reload">
@@ -51,6 +61,8 @@
               :key="action"
               class="link"
               type="button"
+              :disabled="!canMaintain"
+              :title="canMaintain ? '' : '仅检修专责可操作'"
               @click="runAction(action, row)"
             >
               {{ action }}
@@ -71,16 +83,21 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 
 import {
   downloadEntries,
   listEntries,
+  loadConclusion,
   moduleMeta,
   runAction as applyAction,
 } from '@/api/local-service'
+import type { ConclusionMemo } from '@/api/local-service'
+import { onStoreChange } from '@/data/local-store'
 import type { EntryRow } from '@/data/types'
+import { useSessionStore } from '@/stores/session'
 
+const store = useSessionStore()
 const meta = moduleMeta('overhaul')
 const columns = ["工作票号", "检修机组", "检修级别", "计划工期", "实际工期", "工作负责人", "验收人员", "检修状态"]
 const actions = ["提交审批", "开工检修", "办理完工"]
@@ -92,6 +109,14 @@ const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
+const memo = ref<ConclusionMemo | null>(null)
+const canMaintain = computed(() => store.role === 'maintenance')
+
+function formatTime(iso: string): string {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? iso : date.toLocaleString('zh-CN')
+}
+
 const statusSummary = computed(() =>
   statuses.map((status: string) => ({
     status,
@@ -109,6 +134,10 @@ function exportRows() {
 }
 
 function openCreate() {
+  if (!canMaintain.value) {
+    errorMessage.value = '检修工作票归属检修专责，当前岗位仅可查看'
+    return
+  }
   errorMessage.value = '检修工作票登记入口尚未接入审批流'
 }
 
@@ -128,10 +157,24 @@ function reload() {
     const payload = listEntries(meta.key, filters.value)
     rows.value = payload.items
     total.value = payload.total
+    memo.value = loadConclusion()
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '机组检修列表读取失败'
   }
 }
 
+const unsubscribe = onStoreChange(reload)
 onMounted(reload)
+onUnmounted(unsubscribe)
 </script>
+
+<style scoped>
+.conclusion-box { background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 8px; padding: 10px 14px; margin-bottom: 12px; }
+.conclusion-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+.conclusion-time { color: var(--muted); font-size: 12px; }
+.conclusion-text { margin: 6px 0; font-size: 13px; line-height: 1.7; }
+.conclusion-meta { margin: 0; color: var(--muted); font-size: 12px; }
+.warn { background: #fee2e2 !important; color: #b42318; }
+.link:disabled { color: #94a3b8; cursor: not-allowed; }
+</style>
+

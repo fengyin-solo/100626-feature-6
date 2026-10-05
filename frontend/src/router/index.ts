@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
 import Dashboard from '@/views/Dashboard.vue'
+const Basin = () => import('@/views/basin/index.vue')
 const Station = () => import('@/views/station/index.vue')
 const Unit = () => import('@/views/unit/index.vue')
 const Governor = () => import('@/views/governor/index.vue')
@@ -25,6 +26,7 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', name: 'dashboard', component: Dashboard },
+    { path: '/basin', name: 'basin', component: Basin },
     { path: '/station', name: 'station', component: Station },
     { path: '/unit', name: 'unit', component: Unit },
     { path: '/governor', name: 'governor', component: Governor },
