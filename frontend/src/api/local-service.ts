@@ -1,9 +1,20 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import { canWrite, PermissionDeniedError, useSessionStore } from '@/stores/session'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
 const NEGATIVE_ACTIONS = ['撤销', '作废', '拒绝', '驳回', '停用', '忽略', '下线', '回滚']
+
+// 越权拒绝类型统一在 session 模块定义，这里转出给页面统一识别。
+export { PermissionDeniedError }
+
+function requireWrite(key: string): void {
+  const store = useSessionStore()
+  if (!canWrite(store.role, key)) {
+    throw new PermissionDeniedError('当前岗位只有查看权限：归属岗位之外的改动已拒绝，请联系调度员处理')
+  }
+}
 
 export function moduleMeta(key: string): ModuleMeta {
   const meta = MODULE_BY_KEY.get(key)
@@ -28,8 +39,13 @@ export function listEntries(key: string, filters: Record<string, string> = {}): 
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
+function terminalStatuses(meta: ModuleMeta): string[] {
+  return meta.terminalStatuses ?? [meta.statuses[meta.statuses.length - 1]]
+}
+
 export function runAction(key: string, id: number, action: string): ActionResult {
   const meta = moduleMeta(key)
+  requireWrite(key)
   const target = meta.actionTargets[action]
   if (!target) {
     return { ok: false, message: `${meta.entity}没有登记「${action}」这个动作` }
@@ -43,17 +59,50 @@ export function runAction(key: string, id: number, action: string): ActionResult
   if (current === target) {
     return { ok: false, message: `${meta.entity}已经是「${target}」，不用重复操作` }
   }
-  const lastStatus = meta.statuses[meta.statuses.length - 1]
   const updated: EntryRow = {
     ...rows[index],
     status: target,
-    pending: target !== lastStatus,
+    pending: !terminalStatuses(meta).includes(target),
     abnormal: NEGATIVE_ACTIONS.some((verb) => action.startsWith(verb)),
+  }
+  // 电站台账：「运行状态」列永远镜像工作流状态，统计只认 status，不产生第二个数。
+  if (key === 'station') {
+    updated['运行状态'] = target
+    // 非停运态不应挂着停运原因，恢复/转其他状态时清掉。
+    if (target !== '停运') {
+      updated['停运原因'] = ''
+    }
   }
   const next = [...rows]
   next[index] = updated
   saveRows(key, next)
   return { ok: true, message: `${meta.entity}已${action}，当前状态「${target}」` }
+}
+
+// 登记停运必须写明原因：走专用入口，原因落进台账「停运原因」列，流域总览据此单独标出。
+export function registerStationStop(id: number, reason: string): ActionResult {
+  const trimmed = reason.trim()
+  if (trimmed === '') {
+    return { ok: false, message: '停运电站必须写明停运原因' }
+  }
+  const meta = moduleMeta('station')
+  requireWrite(meta.key)
+  const rows = listRows(meta.key)
+  const index = rows.findIndex((row) => Number(row.id) === id)
+  if (index < 0) {
+    return { ok: false, message: `没有找到编号为 ${id} 的水电站` }
+  }
+  const next = [...rows]
+  next[index] = {
+    ...rows[index],
+    status: '停运',
+    pending: false,
+    abnormal: false,
+    运行状态: '停运',
+    停运原因: trimmed,
+  }
+  saveRows(meta.key, next)
+  return { ok: true, message: `水电站已登记停运并记录原因：${trimmed}` }
 }
 
 export function resetModule(key: string): PageResult {
@@ -68,11 +117,10 @@ export function exportEntries(key: string): { filename: string; content: string 
   for (const row of listRows(key)) {
     lines.push([row.id, ...meta.fields.map((field) => row[field] ?? ''), row.status].join(','))
   }
-  return { filename: `${meta.name}-清单.csv`, content: `\uFEFF${lines.join('\n')}` }
+  return { filename: `${meta.name}-清单.csv`, content: `﻿${lines.join('\n')}` }
 }
 
-export function downloadEntries(key: string): void {
-  const { filename, content } = exportEntries(key)
+export function downloadText(filename: string, content: string): void {
   const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const anchor = document.createElement('a')
@@ -84,14 +132,21 @@ export function downloadEntries(key: string): void {
   URL.revokeObjectURL(url)
 }
 
+export function downloadEntries(key: string): void {
+  const { filename, content } = exportEntries(key)
+  downloadText(filename, content)
+}
+
 export function loadOverview(): OverviewResult {
   const rows = allRows()
   const modules = [...MODULE_BY_KEY.values()].map((meta) => {
     const entries = rows[meta.key] ?? []
+    const terminals = terminalStatuses(meta)
     return {
       name: meta.name,
       created: entries.length,
-      pending: entries.filter((row) => row.pending).length,
+      // 汇总条与台账保持同步：直接按当前台账状态 + 终态白名单重算，不缓存旧数。
+      pending: entries.filter((row) => row.pending || !terminals.includes(String(row.status))).length,
       abnormal: entries.filter((row) => row.abnormal).length,
     }
   })

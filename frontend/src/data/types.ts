@@ -18,6 +18,8 @@ export type ModuleMeta = {
   actions: string[]
   actionTargets: Record<string, string>
   metrics: string[]
+  // 终态白名单：落到这些状态后不再计入「待处理」；不填时默认取状态表最后一个。
+  terminalStatuses?: string[]
 }
 
 export type PageResult = {

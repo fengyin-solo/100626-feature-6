@@ -42,9 +42,9 @@
         </tr>
       </thead>
       <tbody>
-        <tr v-for="row in rows" :key="String(row.id)">
+        <tr v-for="row in rows" :key="String(row.id)" :class="{ 'row-conclusion': String(row['工作票号']) === CONCLUSION_TICKET_NO }">
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
-          <td>{{ row.status }}</td>
+          <td><span :class="['badge', badgeClass(String(row.status))]">{{ row.status }}</span></td>
           <td class="row-actions">
             <button
               v-for="action in actions"
@@ -82,10 +82,19 @@ import {
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('overhaul')
-const columns = ["工作票号", "检修机组", "检修级别", "计划工期", "实际工期", "工作负责人", "验收人员", "检修状态"]
+const columns = ["工作票号", "检修机组", "检修级别", "计划工期", "实际工期", "工作负责人", "验收人员", "检修状态", "待办说明"]
 const actions = ["提交审批", "开工检修", "办理完工"]
 const statuses = ["待审批", "已批准", "检修中", "已完工"]
 const stats = [{"label": "待审批工作票", "value": 0}, {"label": "检修中机组", "value": 0}, {"label": "已完工检修", "value": 0}]
+// 流域总览写回的结论固定占用这张票号，页面高亮它，两处取到的是同一条。
+const CONCLUSION_TICKET_NO = 'OH-WATERSHED-CONCLUSION'
+
+function badgeClass(status: string): string {
+  if (status === '待审批') return 'badge-todo'
+  if (status === '检修中') return 'badge-overhaul'
+  if (status === '已完工') return 'badge-running'
+  return 'badge-trial'
+}
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
